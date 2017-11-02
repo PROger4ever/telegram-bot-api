@@ -20,11 +20,14 @@ import (
 	"github.com/technoweenie/multipartstreamer"
 )
 
+const minRequestPeriod = 334 * time.Millisecond //should be changed after experiments later
+
 // BotAPI allows you to interact with the Telegram Bot API.
 type BotAPI struct {
-	Token  string `json:"token"`
-	Debug  bool   `json:"debug"`
-	Buffer int    `json:"buffer"`
+	Token           string    `json:"token"`
+	Debug           bool      `json:"debug"`
+	Buffer          int       `json:"buffer"`
+	LastRequestTime time.Time `json:"lastRequestTime"`
 
 	Self   User         `json:"-"`
 	Client *http.Client `json:"-"`
@@ -62,6 +65,7 @@ func NewBotAPIWithClient(token string, client *http.Client) (*BotAPI, error) {
 func (bot *BotAPI) MakeRequest(endpoint string, params url.Values) (APIResponse, error) {
 	method := fmt.Sprintf(APIEndpoint, bot.Token, endpoint)
 
+	bot.waitRequestTime()
 	resp, err := bot.Client.PostForm(method, params)
 	if err != nil {
 		return APIResponse{}, err
@@ -91,6 +95,16 @@ func (bot *BotAPI) MakeRequest(endpoint string, params url.Values) (APIResponse,
 	}
 
 	return apiResp, nil
+}
+
+func (bot *BotAPI) waitRequestTime() {
+	now := time.Now()
+	minBound := bot.LastRequestTime.Add(minRequestPeriod)
+	if now.Before(minBound) {
+		sleepTime := minBound.Sub(now)
+		<-time.After(sleepTime)
+	}
+	bot.LastRequestTime = time.Now() // it could take longer due to high load
 }
 
 func (bot *BotAPI) decodeAPIResponse(responseBody io.Reader, resp *APIResponse) (_ []byte, err error) {
@@ -195,6 +209,7 @@ func (bot *BotAPI) UploadFile(endpoint string, params map[string]string, fieldna
 
 	ms.SetupRequest(req)
 
+	bot.waitRequestTime()
 	res, err := bot.Client.Do(req)
 	if err != nil {
 		return APIResponse{}, err
